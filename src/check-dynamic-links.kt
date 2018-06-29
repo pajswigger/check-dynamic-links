@@ -81,7 +81,7 @@ class CrossDomainRefererLeakageCheck(val callbacks: IBurpExtenderCallbacks) : Pa
         val refererString = getHeader("Referer", requestInfo.headers) ?: return emptyList()
         val referer = URL(refererString)
 
-        if(baseRequestResponse.httpService.host != referer.host && !referer.query.isEmpty()) {
+        if(baseRequestResponse.httpService.host != referer.host) {
             callbacks.addScanIssue(CrossDomainRefererLeakageIssue(referer, arrayOf(highlightString(baseRequestResponse, refererString))))
         }
         return emptyList()
