@@ -37,34 +37,56 @@ interface MyIssue : IScanIssue {
         get() = "Information"
     override val issueType: Int
         get() = 0
-    override val issueDetail: String?
-        get() = null
     override val remediationDetail: String?
         get() = null
 }
 
 
+fun stripDefaultPort(url: URL): URL = URL(url.protocol, url.host, if(url.port == url.defaultPort) { -1 } else { url.port }, url.file)
+
+
 class CrossDomainScriptIncludeCheck(val callbacks: IBurpExtenderCallbacks) : PassiveCheck {
     private val javaScriptContentTypes = setOf("text/javascript", "application/javascript")
 
+    fun isScriptResponse(requestInfo: IRequestInfo, responseInfo: IResponseInfo): Boolean {
+        val contentType = getHeader("Content-type", responseInfo.headers)
+        if(responseInfo.statusCode == 304.toShort()) {
+            return requestInfo.url.file.endsWith(".js")
+        }
+        else {
+            return javaScriptContentTypes.contains(contentType)
+        }
+    }
+
     override fun doPassiveScan(baseRequestResponse: IHttpRequestResponse): List<IScanIssue> {
         val responseInfo = callbacks.helpers.analyzeResponse(baseRequestResponse.response!!)
-        val contentType = getHeader("Content-type", responseInfo.headers)
 
-        val requestInfo = callbacks.helpers.analyzeRequest(baseRequestResponse.request)
+        val requestInfo = callbacks.helpers.analyzeRequest(baseRequestResponse.httpService, baseRequestResponse.request)
         val refererString = getHeader("Referer", requestInfo.headers) ?: return emptyList()
         val referer = URL(refererString)
 
-        if(javaScriptContentTypes.contains(contentType) && baseRequestResponse.httpService.host != referer.host) {
-            callbacks.addScanIssue(CrossDomainScriptIncludeIssue(referer, arrayOf(highlightString(baseRequestResponse, refererString))))
+        if(isScriptResponse(requestInfo, responseInfo) && baseRequestResponse.httpService.host != referer.host) {
+            addIssueIfNoExisting(CrossDomainScriptIncludeIssue(referer, stripDefaultPort(requestInfo.url).toString(), arrayOf(highlightString(baseRequestResponse, refererString))))
         }
         return emptyList()
     }
 }
 
 
+fun addIssueIfNoExisting(newIssue: IScanIssue) {
+    for(issue in BurpExtender.callbacks.getScanIssues(stripDefaultPort(newIssue.url).toString())) {
+        BurpExtender.callbacks.printOutput("X ${issue.issueDetail}")
+        if(newIssue == issue) {
+            return
+        }
+    }
+    BurpExtender.callbacks.addScanIssue(newIssue)
+}
+
+
 class CrossDomainScriptIncludeIssue(
         override val url: URL,
+        override val issueDetail: String,
         override val httpMessages: Array<IHttpRequestResponse>) : MyIssue {
     override val issueName: String
         get() = "Cross domain script include (dynamic)"
@@ -72,25 +94,34 @@ class CrossDomainScriptIncludeIssue(
         get() = "The application includes a script from a third-party domain, which allows that domain to take control of the application."
     override val remediationBackground: String?
         get() = "Host scripts on the application domain."
+
+    override fun equals(other: Any?): Boolean {
+        if(other !is IScanIssue) {
+            return false
+        }
+        return issueName == other.issueName && url == other.url && issueDetail == other.issueDetail
+    }
 }
 
 
 class CrossDomainRefererLeakageCheck(val callbacks: IBurpExtenderCallbacks) : PassiveCheck {
     override fun doPassiveScan(baseRequestResponse: IHttpRequestResponse): List<IScanIssue> {
-        val requestInfo = callbacks.helpers.analyzeRequest(baseRequestResponse.request)
+        val requestInfo = callbacks.helpers.analyzeRequest(baseRequestResponse.httpService, baseRequestResponse.request)
         val refererString = getHeader("Referer", requestInfo.headers) ?: return emptyList()
         val referer = URL(refererString)
 
-        if(baseRequestResponse.httpService.host != referer.host) {
-            callbacks.addScanIssue(CrossDomainRefererLeakageIssue(referer, arrayOf(highlightString(baseRequestResponse, refererString))))
+        // Only report referers with a query string as more likely to contain confidential info
+        if(baseRequestResponse.httpService.host != referer.host && !requestInfo.url.query.isNullOrEmpty()) {
+            addIssueIfNoExisting(CrossDomainRefererLeakageIssue(referer, stripDefaultPort(requestInfo.url).toString(), arrayOf(highlightString(baseRequestResponse, refererString))))
         }
         return emptyList()
     }
 }
 
 
-class CrossDomainRefererLeakageIssue(
+data class CrossDomainRefererLeakageIssue(
         override val url: URL,
+        override val issueDetail: String,
         override val httpMessages: Array<IHttpRequestResponse>) : MyIssue {
     override val issueName: String
         get() = "Cross domain referer leakage (dynamic)"
@@ -98,6 +129,13 @@ class CrossDomainRefererLeakageIssue(
         get() = "The application leaks confidential URLs to third-party domains through the Referer header."
     override val remediationBackground: String?
         get() = "User the rel=\"noreferrer\" option on links to third-party domains."
+
+    override fun equals(other: Any?): Boolean {
+        if(other !is IScanIssue) {
+            return false
+        }
+        return issueName == other.issueName && url == other.url && issueDetail == other.issueDetail
+    }
 }
 
 
