@@ -75,7 +75,6 @@ class CrossDomainScriptIncludeCheck(val callbacks: IBurpExtenderCallbacks) : Pas
 
 fun addIssueIfNoExisting(newIssue: IScanIssue) {
     for(issue in BurpExtender.callbacks.getScanIssues(stripDefaultPort(newIssue.url).toString())) {
-        BurpExtender.callbacks.printOutput("X ${issue.issueDetail}")
         if(newIssue == issue) {
             return
         }
